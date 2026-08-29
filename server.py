@@ -483,7 +483,7 @@ class ScannerManager:
                 "-ss", "00:00:01",
                 "-i", src_path,
                 "-vframes", "1",
-                "-vf", "scale=440:-2",
+                "-vf", "scale=440:440:force_original_aspect_ratio=decrease",
                 "-q:v", "4",
                 str(dest_path)
             ]
