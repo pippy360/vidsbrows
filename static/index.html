@@ -3,107 +3,202 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>VidsBrows - Video Browser</title>
+  <title>VidsBrows - Local Media Gallery</title>
   <link rel="stylesheet" href="css/style.css">
-  <link rel="preconnect" href="https://fonts.googleapis.com">
-  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
 </head>
 <body>
-  <div class="app-container">
-    <!-- Header / Navbar -->
-    <header class="header">
-      <div class="header-left">
-        <div class="logo">
-          <span class="logo-icon">🎬</span>
-          <span class="logo-text">Vids<span class="highlight">Brows</span></span>
+  <div class="app-shell">
+    <!-- Top Header -->
+    <header class="top-nav">
+      <div class="brand-group">
+        <div class="brand-logo">
+          <svg class="brand-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <rect x="2" y="2" width="20" height="20" rx="4" ry="4"/>
+            <path d="M10 8l6 4-6 4V8z" fill="currentColor"/>
+          </svg>
+          <span class="brand-title">Vids<span class="accent">Brows</span></span>
         </div>
-        <span class="badge" id="source-badge">Checking...</span>
+        <span class="folder-name-badge" id="folder-name-badge" title="Root directory">Loading...</span>
       </div>
 
-      <div class="search-box">
-        <span class="search-icon">🔍</span>
+      <!-- Live Scan & Thumbnail Progress Pill -->
+      <div class="scan-status-pill" id="scan-status-pill" title="Background scan status">
+        <span class="status-indicator-dot" id="status-indicator-dot"></span>
+        <span class="status-text" id="status-text">Connecting...</span>
+        <div class="mini-progress-bar" id="mini-progress-bar" hidden>
+          <div class="mini-progress-fill" id="mini-progress-fill"></div>
+        </div>
+      </div>
+
+      <!-- Search Input -->
+      <div class="search-container">
+        <svg class="search-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <circle cx="11" cy="11" r="8"/>
+          <line x1="21" y1="21" x2="16.65" y2="16.65"/>
+        </svg>
         <input 
           type="text" 
           id="search-input" 
-          placeholder="Search videos by title, tag, or extension..."
-          autocomplete="off"
+          placeholder="Filter by filename or folder..." 
+          autocomplete="off" 
+          spellcheck="false"
         />
-        <button id="clear-search" class="clear-btn" title="Clear search" hidden>&times;</button>
+        <button id="clear-search-btn" class="icon-btn clear-search-btn" title="Clear search" hidden>&times;</button>
       </div>
 
-      <div class="header-actions">
-        <button id="refresh-btn" class="btn btn-secondary" title="Refresh library">
-          🔄 Refresh
+      <!-- Top Actions -->
+      <div class="top-actions">
+        <button id="rescan-btn" class="action-btn secondary-btn" title="Scan directory for new files">
+          <svg class="action-svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <path d="M21.5 2v6h-6M21.34 15.57a10 10 0 1 1-.57-8.38l5.67-5.19"/>
+          </svg>
+          <span>Rescan</span>
         </button>
       </div>
     </header>
 
-    <!-- Sub-bar: Filter Tags & Stats -->
-    <div class="toolbar">
-      <div class="filter-chips" id="filter-chips">
-        <button class="chip active" data-filter="all">All Videos</button>
+    <!-- Sub-bar: Filter Tabs, Subfolder Dropdown & Sort -->
+    <nav class="sub-nav">
+      <div class="filter-tabs">
+        <button class="tab-btn active" data-type="all">
+          <span>All Media</span>
+          <span class="tab-count" id="count-all">0</span>
+        </button>
+        <button class="tab-btn" data-type="video">
+          <span>🎬 Videos</span>
+          <span class="tab-count" id="count-videos">0</span>
+        </button>
+        <button class="tab-btn" data-type="image">
+          <span>📷 Pictures</span>
+          <span class="tab-count" id="count-images">0</span>
+        </button>
       </div>
-      <div class="stats" id="stats-text">
-        Loading videos...
-      </div>
-    </div>
 
-    <!-- Info Notice -->
-    <div class="info-banner" id="info-banner" hidden>
-      <span class="info-icon">💡</span>
-      <div class="info-text" id="info-banner-text">
-        Showing online demo clips. To browse your own files, place <code>.mp4</code> or <code>.webm</code> videos into the <code>./videos/</code> folder and hit Refresh!
-      </div>
-      <button class="banner-close" id="close-banner">&times;</button>
-    </div>
+      <div class="sub-nav-controls">
+        <!-- Subfolder filter -->
+        <div class="select-wrapper" id="folder-select-wrapper">
+          <label for="folder-select" class="visually-hidden">Folder</label>
+          <select id="folder-select">
+            <option value="all">📁 All Folders</option>
+          </select>
+        </div>
 
-    <!-- Video Grid -->
-    <main class="main-content">
-      <div class="video-grid" id="video-grid">
-        <!-- Video cards rendered by app.js -->
+        <!-- Sort selector -->
+        <div class="select-wrapper">
+          <label for="sort-select" class="visually-hidden">Sort</label>
+          <select id="sort-select">
+            <option value="date_desc">📅 Date Modified (Newest)</option>
+            <option value="date_asc">📅 Date Modified (Oldest)</option>
+            <option value="name_asc">🔤 Name (A → Z)</option>
+            <option value="name_desc">🔤 Name (Z → A)</option>
+            <option value="size_desc">💾 Size (Largest)</option>
+          </select>
+        </div>
+
+        <!-- Grid Size Toggle -->
+        <div class="view-size-toggle" title="Thumbnail display size">
+          <button class="size-btn active" data-size="normal" title="Normal grid">■</button>
+          <button class="size-btn" data-size="compact" title="Compact grid">▪▪</button>
+        </div>
+      </div>
+    </nav>
+
+    <!-- Main Content Area -->
+    <main class="main-body">
+      <!-- Media Items Count / Notification Banner -->
+      <div class="items-summary-bar">
+        <span id="items-summary-text">Loading library...</span>
+        <span id="scan-feedback-text" class="scan-feedback-text"></span>
+      </div>
+
+      <!-- Media Grid -->
+      <div class="media-grid" id="media-grid">
+        <!-- Cards inserted dynamically by app.js -->
+      </div>
+
+      <!-- Infinite Scroll Trigger Sentinel -->
+      <div id="scroll-sentinel" class="scroll-sentinel">
+        <div class="loading-spinner" id="loading-spinner" hidden>
+          <div class="spinner-ring"></div>
+          <span>Loading more files...</span>
+        </div>
+        <div class="end-of-results" id="end-of-results" hidden>
+          <span>✓ All media loaded</span>
+        </div>
       </div>
 
       <!-- Empty State -->
       <div class="empty-state" id="empty-state" hidden>
-        <div class="empty-icon">📂</div>
-        <h3>No matching videos found</h3>
-        <p>Try adjusting your search query or filter tags.</p>
-        <button class="btn btn-primary" id="reset-filter-btn">Reset Filters</button>
+        <div class="empty-illustration">📂</div>
+        <h3 id="empty-title">No Media Found</h3>
+        <p id="empty-desc">No supported video or image files were found in this directory or with the active filter.</p>
+        <button class="action-btn primary-btn" id="empty-reset-btn">Reset All Filters</button>
       </div>
     </main>
 
-    <!-- Video Player Modal -->
-    <div class="modal-overlay" id="video-modal" hidden>
-      <div class="modal-card">
-        <div class="modal-header">
-          <div class="modal-title-group">
-            <h3 id="modal-video-title">Video Title</h3>
-            <span class="modal-tag" id="modal-video-tag">MP4</span>
+    <!-- Unified Media Lightbox Modal (Videos & Images) -->
+    <div class="lightbox-modal" id="media-modal" hidden>
+      <div class="lightbox-backdrop" id="modal-backdrop"></div>
+      
+      <div class="lightbox-container">
+        <!-- Lightbox Header -->
+        <div class="lightbox-header">
+          <div class="media-info-header">
+            <span class="media-type-badge" id="modal-type-badge">VIDEO</span>
+            <span class="media-counter-badge" id="modal-counter-badge">1 / 1</span>
+            <h3 class="modal-filename" id="modal-filename" title="Filename">Filename.mp4</h3>
           </div>
-          <button class="modal-close" id="modal-close-btn" title="Close (Esc)">&times;</button>
-        </div>
-        
-        <div class="modal-video-wrapper">
-          <video id="main-video-player" controls preload="metadata">
-            Your browser does not support HTML5 video streaming.
-          </video>
+
+          <div class="modal-header-actions">
+            <a id="modal-download-btn" class="icon-btn modal-action-btn" href="#" download title="Download / Open Original">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
+                <polyline points="7 10 12 15 17 10"/>
+                <line x1="12" y1="15" x2="12" y2="3"/>
+              </svg>
+            </a>
+            <button class="icon-btn modal-action-btn close-modal-btn" id="modal-close-btn" title="Close (Esc)">
+              &times;
+            </button>
+          </div>
         </div>
 
-        <div class="modal-footer">
-          <p id="modal-video-desc" class="modal-desc"></p>
+        <!-- Lightbox Content Area -->
+        <div class="lightbox-content">
+          <!-- Navigation Arrows -->
+          <button class="nav-arrow nav-prev" id="modal-prev-btn" title="Previous (Left Arrow)">
+            &#10094;
+          </button>
+          <button class="nav-arrow nav-next" id="modal-next-btn" title="Next (Right Arrow)">
+            &#10095;
+          </button>
+
+          <!-- Video Player View -->
+          <div class="media-viewer video-viewer" id="video-viewer-box" hidden>
+            <video id="active-video-player" controls preload="metadata">
+              Your browser does not support HTML5 video.
+            </video>
+          </div>
+
+          <!-- Image Viewer View -->
+          <div class="media-viewer image-viewer" id="image-viewer-box" hidden>
+            <img id="active-image-viewer" src="" alt="Media Preview" />
+          </div>
+        </div>
+
+        <!-- Lightbox Footer -->
+        <div class="lightbox-footer">
           <div class="modal-meta-row">
-            <span id="modal-video-file" class="meta-item"></span>
-            <span id="modal-video-size" class="meta-item"></span>
+            <span class="meta-tag" id="modal-folder-tag">📁 Folder</span>
+            <span class="meta-tag" id="modal-size-tag">💾 0 MB</span>
+            <span class="meta-tag" id="modal-date-tag">📅 2026-08-29</span>
+          </div>
+          <div class="shortcuts-hint">
+            <span>Shortcuts: <b>←</b> / <b>→</b> Browse • <b>Space</b> Play/Pause • <b>Esc</b> Close</span>
           </div>
         </div>
       </div>
     </div>
-
-    <!-- Footer -->
-    <footer class="footer">
-      <p>Built with plain HTML, CSS, JavaScript &amp; Python Backend • <a href="https://github.com/pippy360/vidsbrows" target="_blank" rel="noopener">vidsbrows on GitHub</a></p>
-    </footer>
   </div>
 
   <script src="js/app.js"></script>

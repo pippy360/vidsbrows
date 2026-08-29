@@ -21,6 +21,9 @@ env/
 .DS_Store
 Thumbs.db
 
+# VidsBrows cache directory
+.vidsbrows_cache/
+
 # Large local video files (optional: keep directory tracked via .gitkeep)
 videos/*
 !videos/.gitkeep

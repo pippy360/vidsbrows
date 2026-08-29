@@ -1,75 +1,102 @@
 # 🎬 VidsBrows
 
-A sleek, lightweight video browsing and streaming web application built with plain HTML, CSS, JavaScript, and a zero-dependency Python backend.
+**VidsBrows** is an ultra-fast, 100% offline local video and photo gallery with background indexing, progressive thumbnail generation, and HTTP Range video streaming.
+
+Drop it into any directory with thousands of videos and photos, and it instantly serves a responsive web gallery while indexing and generating thumbnails in the background.
 
 ---
 
-## ✨ Features
+## ⚡ Highlights
 
-- **Zero-Dependency Python Backend**: Uses Python's standard library (`http.server`) out of the box—no extra packages required.
-- **HTTP Range Streaming**: Supports HTTP 206 Partial Content range requests, allowing smooth HTML5 video scrubbing and instant seeking.
-- **Instant Demo Content**: Ships with built-in open-source sample video streams (Blender open movie clips) so you can test playback immediately.
-- **Local File Discovery**: Automatically scans `./videos/` for local media files (`.mp4`, `.webm`, `.mov`, `.mkv`, `.ogg`, `.m4v`).
-- **Responsive Dark UI**: Clean, modern media browser interface with real-time search, category filtering, responsive video card grid, and an interactive video modal player.
-- **Keyboard Shortcuts**: Press `Esc` to dismiss the video player.
+- **100% Offline**: Zero external CDN requests, zero tracking, and no external web fonts. Uses high-performance native system typography and inline SVGs.
+- **Drop-in Portability**: Point it at any folder on your machine or external drive. It recursively scans and organizes all subfolders.
+- **Background Scanner & Parallel Workers**:
+  - Starts serving files immediately—no waiting for thousands of files to index.
+  - Multi-threaded background thumbnail generation for both **videos** (via `ffmpeg` / Apple QuickLook) and **images** (via Pillow / Apple `sips`).
+  - Stores persistent thumbnails and SQLite index inside `.vidsbrows_cache/` in the target folder so subsequent launches are instantaneous.
+- **Large Library Scaling**:
+  - Infinite scrolling with virtual DOM chunking via `IntersectionObserver`.
+  - Fast indexed queries backed by SQLite WAL mode.
+- **HTML5 Range Video Streaming**:
+  - Native HTTP `206 Partial Content` support for smooth scrubbing and seeking in `.mp4`, `.webm`, `.mov`, `.mkv`, etc.
+- **Unified Media Lightbox**:
+  - Seamlessly view full-resolution pictures and stream videos.
+  - Keyboard navigation (`←` / `→` arrows, `Space` to play/pause, `Esc` to close, `F` for fullscreen).
 
 ---
 
-## 📁 Project Structure
+## 📁 Supported Media Formats
 
-```text
-vidsbrows/
-├── .gitignore         # Ignores large media files, pycache, OS files
-├── README.md          # Project documentation
-├── server.py          # Python HTTP server, REST APIs & streaming handler
-├── static/            # Static frontend assets
-│   ├── index.html     # HTML structure & media player modal
-│   ├── css/
-│   │   └── style.css  # Dark-mode styling, responsive grid & animations
-│   └── js/
-│       └── app.js     # Video state, search, filtering & modal logic
-└── videos/            # Directory to drop local videos
-    └── .gitkeep
+| Category | Extensions |
+| :--- | :--- |
+| **Videos** | `.mp4`, `.webm`, `.mov`, `.mkv`, `.avi`, `.m4v`, `.flv`, `.wmv`, `.ts`, `.3gp`, `.ogv` |
+| **Pictures** | `.jpg`, `.jpeg`, `.png`, `.gif`, `.webp`, `.bmp`, `.tiff`, `.svg`, `.heic`, `.heif`, `.avif` |
+
+---
+
+## 🚀 Quick Start
+
+### Option A: Browse the Current Folder
+From any directory containing media:
+```bash
+python3 /Users/tomnom/git/vidsbrows/server.py
 ```
 
----
+### Option B: Point to Any Folder or External Drive
+```bash
+python3 /Users/tomnom/git/vidsbrows/server.py /Volumes/MyDrive/PhotosAndVideos
+```
 
-## 🚀 Getting Started
-
-### 1. Run the Server
-From the repository directory, simply run:
-
+### Option C: Copy/Symlink into Your Folder
+Copy or symlink `vidsbrows` into your target directory and run:
 ```bash
 python3 server.py
 ```
 
-By default, the server starts on port `8000`. You can change the port with the `PORT` environment variable:
+Open [http://localhost:8000](http://localhost:8000) in your web browser.
 
-```bash
-PORT=8080 python3 server.py
+---
+
+## ⚙️ Command Line Options
+
+```text
+usage: server.py [-h] [--port PORT] [--host HOST] [--workers WORKERS] [target_dir]
+
+positional arguments:
+  target_dir            Directory containing videos and pictures (default: current directory)
+
+options:
+  -h, --help            show this help message and exit
+  --port, -p PORT       Port to bind (default: 8000)
+  --host HOST           Host interface to bind (default: 127.0.0.1)
+  --workers, -w WORKERS Number of background thumbnail workers (default: 2)
 ```
 
-### 2. Open in Browser
-Visit [http://localhost:8000](http://localhost:8000) in your web browser.
+---
 
-### 3. Add Local Videos
-Drop any video files (`.mp4`, `.webm`, etc.) into the `videos/` directory and click the **🔄 Refresh** button in the top navigation bar.
+## 🗄️ How the Cache Works
+
+When run, VidsBrows creates a hidden `.vidsbrows_cache/` folder inside the target directory:
+```text
+[your-media-folder]/
+├── .vidsbrows_cache/
+│   ├── library.db       # SQLite index with WAL mode (instant filtering & sorting)
+│   └── thumbnails/      # Cached 440px JPEG thumbnails (keyed by content hash)
+├── Subfolder1/
+│   └── video1.mp4
+└── photo1.jpg
+```
+- Thumbnails are generated only once per file based on a hash of path, size, and modification time.
+- If files are added or modified, the background scanner updates only the changed files.
+- `.vidsbrows_cache/` is automatically ignored in git.
 
 ---
 
-## 🔌 API Endpoints
+## ⌨️ Keyboard Shortcuts
 
-| Endpoint | Method | Description |
-| :--- | :--- | :--- |
-| `/api/videos` | `GET` | Returns list of local videos or fallback demo clips |
-| `/api/status` | `GET` | Health check & repository video count |
-| `/videos/<filename>` | `GET` | Stream video file with HTTP Range support |
-
----
-
-## 🛠️ Roadmap & Future Ideas
-
-- [ ] Drag-and-drop file upload directly through the web UI
-- [ ] Automatic thumbnail extraction using `ffmpeg`
-- [ ] SQLite database for custom titles, descriptions, and user ratings
-- [ ] Playlist creation and watch history tracking
+| Key | Action |
+| :--- | :--- |
+| `←` / `→` | Previous / Next media in lightbox |
+| `Space` | Play / Pause active video |
+| `F` | Toggle fullscreen |
+| `Esc` | Close lightbox / unfocus search |
