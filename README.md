@@ -9,11 +9,20 @@ Drop it into any directory with thousands of videos and photos, and it instantly
 ## ⚡ Highlights
 
 - **100% Offline**: Zero external CDN requests, zero tracking, and no external web fonts. Uses high-performance native system typography and inline SVGs.
-- **Drop-in Portability**: Point it at any folder on your machine or external drive. It recursively scans and organizes all subfolders.
+- **Drop-in Portability**: Point it at any folder on your machine or external drive. It recursively scans and organizes all subfolders while leaving your media folders completely untouched.
+- **Hierarchical Folder Browsing**:
+  - Interactive breadcrumbs trail (`🏠 All Folders / 📁 Vacation / 📁 Beach`).
+  - Visual folder cards with live image/video previews and item counts.
+  - One-click navigation into any folder or subfolder.
+- **Video Length (Duration) Extraction**:
+  - Probes duration via `ffprobe` / `ffmpeg` and shows duration badges (`⏱️ 03:45`) on cards and in the player.
+- **Full Browser History & Back/Forward Support**:
+  - Deep-linkable URLs with state synchronization (`?folder=...`, `?type=...`, `?media=...`).
+  - Pressing the browser's **Back** button naturally exits the lightbox modal, returns to parent folders, or steps through filter history.
 - **Background Scanner & Parallel Workers**:
   - Starts serving files immediately—no waiting for thousands of files to index.
   - Multi-threaded background thumbnail generation for both **videos** (via `ffmpeg` / Apple QuickLook) and **images** (via Pillow / Apple `sips`).
-  - Stores persistent thumbnails and SQLite index inside `.vidsbrows_cache/` in the target folder so subsequent launches are instantaneous.
+  - Stores persistent thumbnails and SQLite index inside `vidsbrows/.vidsbrows_cache/` so subsequent launches are instantaneous.
 - **Large Library Scaling**:
   - Infinite scrolling with virtual DOM chunking via `IntersectionObserver`.
   - Fast indexed queries backed by SQLite WAL mode.
