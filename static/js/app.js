@@ -1,7 +1,8 @@
 /**
  * VidsBrows - Client Application
  * 100% Offline Local Media Gallery with Infinite Scrolling,
- * Live Background Scanner Monitoring, and Unified Media Lightbox.
+ * Live Background Scanner Monitoring, Hierarchical Folder Browsing,
+ * and Unified Media Lightbox.
  */
 
 // Application State
@@ -12,8 +13,11 @@ const state = {
   limit: 60,
   hasMore: true,
   isLoading: false,
-  filterType: 'all',
-  filterFolder: 'all',
+  filterType: 'all',         // 'all' | 'video' | 'image' | 'folders'
+  currentFolder: '',         // '' = root/all
+  breadcrumbs: [],
+  subfolders: [],
+  allFolders: [],
   searchQuery: '',
   sort: 'date_desc',
   gridSize: 'normal',
@@ -37,9 +41,22 @@ const el = {
   countAll: document.getElementById('count-all'),
   countVideos: document.getElementById('count-videos'),
   countImages: document.getElementById('count-images'),
+  countFolders: document.getElementById('count-folders'),
   folderSelect: document.getElementById('folder-select'),
   sortSelect: document.getElementById('sort-select'),
   sizeBtns: document.querySelectorAll('.size-btn'),
+
+  // Breadcrumb Navigation
+  breadcrumbContainer: document.getElementById('breadcrumb-container'),
+  breadcrumbUpBtn: document.getElementById('breadcrumb-up-btn'),
+  breadcrumbTrail: document.getElementById('breadcrumb-trail'),
+  breadcrumbClearBtn: document.getElementById('breadcrumb-clear-btn'),
+
+  // Subfolders Section
+  foldersSection: document.getElementById('folders-section'),
+  subfoldersCountBadge: document.getElementById('subfolders-count-badge'),
+  foldersGrid: document.getElementById('folders-grid'),
+
   itemsSummaryText: document.getElementById('items-summary-text'),
   scanFeedbackText: document.getElementById('scan-feedback-text'),
   mediaGrid: document.getElementById('media-grid'),
@@ -75,7 +92,7 @@ function init() {
   setupEventListeners();
   setupInfiniteScroll();
   fetchScanStatus();
-  fetchFolders();
+  fetchFolders(state.currentFolder);
   resetAndFetch();
 
   // Start polling scan status
@@ -111,6 +128,7 @@ function setupEventListeners() {
     try {
       await fetch('/api/rescan', { method: 'POST' });
       fetchScanStatus();
+      fetchFolders(state.currentFolder);
     } catch (err) {
       console.error('Failed to trigger rescan:', err);
     } finally {
@@ -124,14 +142,34 @@ function setupEventListeners() {
       el.tabBtns.forEach(b => b.classList.remove('active'));
       btn.classList.add('active');
       state.filterType = btn.dataset.type;
+
+      // When clicking folders tab, fetch subfolders for current folder
+      if (state.filterType === 'folders') {
+        fetchFolders(state.currentFolder);
+      }
       resetAndFetch();
     });
   });
 
-  // Subfolder select
+  // Subfolder dropdown select
   el.folderSelect.addEventListener('change', (e) => {
-    state.filterFolder = e.target.value;
-    resetAndFetch();
+    const val = e.target.value;
+    navigateToFolder(val === 'all' ? '' : val);
+  });
+
+  // Breadcrumb Up Button
+  el.breadcrumbUpBtn.addEventListener('click', () => {
+    if (state.breadcrumbs.length > 1) {
+      const parentCrumb = state.breadcrumbs[state.breadcrumbs.length - 2];
+      navigateToFolder(parentCrumb.path);
+    } else {
+      navigateToFolder('');
+    }
+  });
+
+  // Breadcrumb Clear Button
+  el.breadcrumbClearBtn.addEventListener('click', () => {
+    navigateToFolder('');
   });
 
   // Sort selector
@@ -157,17 +195,16 @@ function setupEventListeners() {
   // Reset filters button in empty state
   el.emptyResetBtn.addEventListener('click', () => {
     state.filterType = 'all';
-    state.filterFolder = 'all';
+    state.currentFolder = '';
     state.searchQuery = '';
     state.sort = 'date_desc';
 
     el.searchInput.value = '';
     el.clearSearchBtn.hidden = true;
-    el.folderSelect.value = 'all';
     el.sortSelect.value = 'date_desc';
     el.tabBtns.forEach(b => b.classList.toggle('active', b.dataset.type === 'all'));
 
-    resetAndFetch();
+    navigateToFolder('');
   });
 
   // Lightbox close listeners
@@ -183,12 +220,22 @@ function setupEventListeners() {
 }
 
 /**
+ * Navigate into a folder path
+ */
+function navigateToFolder(folderPath) {
+  state.currentFolder = folderPath || '';
+  el.folderSelect.value = state.currentFolder ? state.currentFolder : 'all';
+  fetchFolders(state.currentFolder);
+  resetAndFetch();
+}
+
+/**
  * Setup IntersectionObserver for smooth infinite scroll
  */
 function setupInfiniteScroll() {
   const observer = new IntersectionObserver((entries) => {
     const entry = entries[0];
-    if (entry.isIntersecting && !state.isLoading && state.hasMore) {
+    if (entry.isIntersecting && !state.isLoading && state.hasMore && state.filterType !== 'folders') {
       fetchNextBatch();
     }
   }, { rootMargin: '400px' });
@@ -206,14 +253,26 @@ function resetAndFetch() {
   el.mediaGrid.innerHTML = '';
   el.emptyState.hidden = true;
   el.endOfResults.hidden = true;
-  fetchNextBatch();
+
+  if (state.filterType === 'folders') {
+    // In folders mode, media items are hidden or minimal, subfolders are prominent
+    el.mediaGrid.hidden = true;
+    el.scrollSentinel.hidden = true;
+    el.itemsSummaryText.textContent = state.subfolders.length === 0 
+      ? 'No subfolders in this folder' 
+      : `Showing ${state.subfolders.length} subfolder${state.subfolders.length === 1 ? '' : 's'}`;
+  } else {
+    el.mediaGrid.hidden = false;
+    el.scrollSentinel.hidden = false;
+    fetchNextBatch();
+  }
 }
 
 /**
  * Fetch next paginated batch of media items from server
  */
 async function fetchNextBatch() {
-  if (state.isLoading || !state.hasMore) return;
+  if (state.isLoading || !state.hasMore || state.filterType === 'folders') return;
 
   state.isLoading = true;
   el.loadingSpinner.hidden = false;
@@ -223,10 +282,11 @@ async function fetchNextBatch() {
     sort: state.sort,
     limit: state.limit,
     offset: state.offset,
+    recursive: '1',
   });
 
-  if (state.filterFolder !== 'all') {
-    params.set('folder', state.filterFolder);
+  if (state.currentFolder) {
+    params.set('folder', state.currentFolder);
   }
   if (state.searchQuery) {
     params.set('q', state.searchQuery);
@@ -304,15 +364,31 @@ function renderBatch(items, startIndex) {
       <div class="card-details">
         <h4 class="card-title" title="${escapeHtml(item.filename)}">${escapeHtml(item.filename)}</h4>
         <div class="card-subtext">
-          <span class="card-folder" title="${escapeHtml(item.parent_dir)}">📁 ${escapeHtml(item.parent_dir)}</span>
+          <span class="card-folder" data-folder="${escapeHtml(item.parent_dir)}" title="Browse folder: ${escapeHtml(item.parent_dir)}">📁 ${escapeHtml(item.parent_dir)}</span>
           <span>${escapeHtml(item.date_formatted)}</span>
         </div>
       </div>
     `;
 
-    card.addEventListener('click', () => {
+    // Click on thumbnail/card opens lightbox
+    card.querySelector('.card-media-box').addEventListener('click', () => {
       openLightbox(globalIndex);
     });
+    card.querySelector('.card-title').addEventListener('click', () => {
+      openLightbox(globalIndex);
+    });
+
+    // Click on folder tag navigates into that folder
+    const folderTag = card.querySelector('.card-folder');
+    if (folderTag) {
+      folderTag.addEventListener('click', (e) => {
+        e.stopPropagation();
+        const fPath = folderTag.dataset.folder;
+        if (fPath && fPath !== 'Root') {
+          navigateToFolder(fPath);
+        }
+      });
+    }
 
     fragment.appendChild(card);
   });
@@ -326,10 +402,152 @@ function renderBatch(items, startIndex) {
 function updateSummaryText() {
   const loaded = state.items.length;
   const total = state.totalCount;
+  const folderPrefix = state.currentFolder ? `in "${state.currentFolder}": ` : '';
   if (total === 0) {
-    el.itemsSummaryText.textContent = 'No matching items';
+    el.itemsSummaryText.textContent = `${folderPrefix}No matching items`;
   } else {
-    el.itemsSummaryText.textContent = `Showing ${loaded} of ${total.toLocaleString()} item${total === 1 ? '' : 's'}`;
+    el.itemsSummaryText.textContent = `${folderPrefix}Showing ${loaded} of ${total.toLocaleString()} item${total === 1 ? '' : 's'}`;
+  }
+}
+
+/**
+ * Fetch and Render Folders & Breadcrumbs
+ */
+async function fetchFolders(folderPath = '') {
+  try {
+    const res = await fetch(`/api/folders?folder=${encodeURIComponent(folderPath || '')}`);
+    if (!res.ok) return;
+    const data = await res.json();
+
+    state.breadcrumbs = data.breadcrumbs || [];
+    state.subfolders = data.subfolders || [];
+    state.allFolders = data.all_folders || [];
+
+    // Update count in tab
+    if (el.countFolders) {
+      el.countFolders.textContent = state.allFolders.length.toLocaleString();
+    }
+
+    // Render breadcrumbs
+    renderBreadcrumbs();
+
+    // Render subfolders grid
+    renderSubfolders();
+
+    // Populate dropdown
+    renderFolderDropdown();
+  } catch (err) {
+    console.error('Failed to load folders:', err);
+  }
+}
+
+/**
+ * Render Breadcrumbs Navigation Bar
+ */
+function renderBreadcrumbs() {
+  const isInsideFolder = Boolean(state.currentFolder);
+  const isFoldersTab = state.filterType === 'folders';
+
+  if (!isInsideFolder && !isFoldersTab) {
+    el.breadcrumbContainer.hidden = true;
+    return;
+  }
+
+  el.breadcrumbContainer.hidden = false;
+
+  // Up button state
+  el.breadcrumbUpBtn.style.visibility = (state.breadcrumbs.length > 1) ? 'visible' : 'hidden';
+
+  // Render trail items
+  let trailHtml = '';
+  state.breadcrumbs.forEach((crumb, idx) => {
+    const isLast = idx === state.breadcrumbs.length - 1;
+    const activeClass = isLast ? 'active' : '';
+    const icon = idx === 0 ? '🏠' : '📁';
+
+    if (idx > 0) {
+      trailHtml += `<span class="breadcrumb-separator">/</span>`;
+    }
+
+    trailHtml += `
+      <span class="breadcrumb-item ${activeClass}" data-path="${escapeHtml(crumb.path)}">
+        ${icon} ${escapeHtml(crumb.name)}
+      </span>
+    `;
+  });
+
+  el.breadcrumbTrail.innerHTML = trailHtml;
+
+  // Attach click listeners to crumbs
+  el.breadcrumbTrail.querySelectorAll('.breadcrumb-item:not(.active)').forEach(item => {
+    item.addEventListener('click', () => {
+      navigateToFolder(item.dataset.path);
+    });
+  });
+}
+
+/**
+ * Render Subfolder Cards
+ */
+function renderSubfolders() {
+  const showSection = (state.filterType === 'folders') || (state.currentFolder && state.subfolders.length > 0);
+
+  if (!showSection || state.subfolders.length === 0) {
+    el.foldersSection.hidden = true;
+    return;
+  }
+
+  el.foldersSection.hidden = false;
+  el.subfoldersCountBadge.textContent = `${state.subfolders.length} folder${state.subfolders.length === 1 ? '' : 's'}`;
+
+  el.foldersGrid.innerHTML = state.subfolders.map(f => {
+    const previewImg = f.preview_id 
+      ? `<img src="/api/thumbnail?id=${f.preview_id}" loading="lazy" alt="${escapeHtml(f.name)}" onerror="this.style.display='none'" />` 
+      : '';
+
+    return `
+      <article class="folder-card" data-path="${escapeHtml(f.path)}">
+        <div class="folder-preview-box">
+          ${previewImg}
+          <div class="folder-icon-large">📁</div>
+          <span class="folder-card-badge">${f.total_items} items</span>
+        </div>
+        <div class="folder-card-body">
+          <div class="folder-card-info">
+            <h4 class="folder-card-title">${escapeHtml(f.name)}</h4>
+            <span class="folder-card-meta">${f.videos_count} videos • ${f.images_count} photos</span>
+          </div>
+          <span class="folder-chevron">➔</span>
+        </div>
+      </article>
+    `;
+  }).join('');
+
+  // Add click listeners to folder cards
+  el.foldersGrid.querySelectorAll('.folder-card').forEach(card => {
+    card.addEventListener('click', () => {
+      navigateToFolder(card.dataset.path);
+    });
+  });
+}
+
+/**
+ * Populate Subfolder Dropdown Select
+ */
+function renderFolderDropdown() {
+  const currentVal = state.currentFolder || 'all';
+  let html = '<option value="all">📁 All Folders (Entire Library)</option>';
+
+  state.allFolders.forEach(f => {
+    const label = f.folder === 'Root' ? '📁 [Root Directory]' : `📁 ${f.folder}`;
+    html += `<option value="${escapeHtml(f.path)}">${escapeHtml(label)} (${f.count})</option>`;
+  });
+
+  el.folderSelect.innerHTML = html;
+
+  // Restore selection
+  if (el.folderSelect.querySelector(`option[value="${CSS.escape(currentVal)}"]`)) {
+    el.folderSelect.value = currentVal;
   }
 }
 
@@ -389,32 +607,6 @@ function startScanStatusPolling() {
   state.pollTimer = setInterval(() => {
     fetchScanStatus();
   }, 2000);
-}
-
-/**
- * Fetch subfolders list for dropdown
- */
-async function fetchFolders() {
-  try {
-    const res = await fetch('/api/folders');
-    if (!res.ok) return;
-    const data = await res.json();
-    const folders = data.folders || [];
-
-    const currentVal = el.folderSelect.value;
-    let html = '<option value="all">📁 All Folders</option>';
-    folders.forEach(f => {
-      html += `<option value="${escapeHtml(f.folder)}">📁 ${escapeHtml(f.folder)} (${f.count})</option>`;
-    });
-    el.folderSelect.innerHTML = html;
-
-    // Restore selected value if still present
-    if (currentVal && el.folderSelect.querySelector(`option[value="${CSS.escape(currentVal)}"]`)) {
-      el.folderSelect.value = currentVal;
-    }
-  } catch (err) {
-    console.error('Failed to load folders list:', err);
-  }
 }
 
 /**
@@ -494,7 +686,7 @@ function showPreviousMedia() {
 function showNextMedia() {
   if (state.modalIndex < state.items.length - 1) {
     openLightbox(state.modalIndex + 1);
-  } else if (state.hasMore && !state.isLoading) {
+  } else if (state.hasMore && !state.isLoading && state.filterType !== 'folders') {
     // If at end of loaded buffer, load next batch and advance
     fetchNextBatch().then(() => {
       if (state.modalIndex < state.items.length - 1) {

@@ -201,7 +201,7 @@ class MediaLibrary:
                     "thumbs_pending": row["thumbs_pending"] or 0,
                 }
 
-    def query_media(self, media_type=None, parent_dir=None, search_query=None, sort="date_desc", limit=60, offset=0):
+    def query_media(self, media_type=None, parent_dir=None, search_query=None, sort="date_desc", limit=60, offset=0, recursive=True):
         """Query media items with filtering and pagination."""
         clauses = []
         params = []
@@ -210,9 +210,13 @@ class MediaLibrary:
             clauses.append("media_type = ?")
             params.append(media_type)
 
-        if parent_dir:
-            clauses.append("parent_dir = ?")
-            params.append(parent_dir)
+        if parent_dir is not None and parent_dir != "" and parent_dir != "all":
+            if recursive:
+                clauses.append("(parent_dir = ? OR parent_dir LIKE ? || '/%')")
+                params.extend([parent_dir, parent_dir])
+            else:
+                clauses.append("parent_dir = ?")
+                params.append(parent_dir)
 
         if search_query:
             clauses.append("(filename LIKE ? OR rel_path LIKE ?)")
@@ -274,17 +278,87 @@ class MediaLibrary:
             "has_more": (offset + limit) < total_count
         }
 
-    def get_folders(self):
-        """Get list of subfolders with item count."""
+    def get_folders(self, current_folder=""):
+        """Get hierarchical subfolders, breadcrumbs, and flat folder list."""
+        curr = (current_folder or "").strip("/").strip()
+        if curr == "all" or curr == "Root":
+            curr = ""
+
         with self._lock:
             with self.get_connection() as conn:
                 cursor = conn.execute("""
-                    SELECT parent_dir, COUNT(*) as count 
+                    SELECT 
+                        parent_dir, 
+                        COUNT(*) as total_count,
+                        SUM(CASE WHEN media_type = 'video' THEN 1 ELSE 0 END) as videos_count,
+                        SUM(CASE WHEN media_type = 'image' THEN 1 ELSE 0 END) as images_count,
+                        MAX(CASE WHEN thumb_status = 'done' THEN id ELSE id END) as preview_id
                     FROM media 
                     GROUP BY parent_dir 
-                    ORDER BY count DESC, parent_dir ASC
+                    ORDER BY parent_dir ASC
                 """)
-                return [{"folder": row["parent_dir"] or "Root", "count": row["count"]} for row in cursor.fetchall()]
+                rows = [dict(r) for r in cursor.fetchall()]
+
+        # Compute breadcrumbs
+        breadcrumbs = [{"name": "All Folders", "path": ""}]
+        if curr:
+            parts = curr.split("/")
+            accum = []
+            for p in parts:
+                accum.append(p)
+                breadcrumbs.append({"name": p, "path": "/".join(accum)})
+
+        # Compute direct subfolders under current folder
+        prefix = (curr + "/") if curr else ""
+        subfolders_map = {}
+
+        for r in rows:
+            p = (r["parent_dir"] or "").strip("/")
+            if not p:
+                continue
+            if prefix:
+                if not p.startswith(prefix):
+                    continue
+                rem = p[len(prefix):]
+            else:
+                rem = p
+
+            parts = rem.split("/")
+            child_name = parts[0]
+            child_full_path = (prefix + child_name) if prefix else child_name
+
+            if child_name not in subfolders_map:
+                subfolders_map[child_name] = {
+                    "name": child_name,
+                    "path": child_full_path,
+                    "total_items": 0,
+                    "videos_count": 0,
+                    "images_count": 0,
+                    "preview_id": r["preview_id"]
+                }
+
+            subfolders_map[child_name]["total_items"] += r["total_count"]
+            subfolders_map[child_name]["videos_count"] += r["videos_count"]
+            subfolders_map[child_name]["images_count"] += r["images_count"]
+            if not subfolders_map[child_name]["preview_id"] and r["preview_id"]:
+                subfolders_map[child_name]["preview_id"] = r["preview_id"]
+
+        # Flat list of all folders for dropdown
+        all_folders = []
+        for r in rows:
+            folder_name = r["parent_dir"] or "Root"
+            all_folders.append({
+                "folder": folder_name,
+                "path": r["parent_dir"] or "",
+                "count": r["total_count"]
+            })
+
+        return {
+            "current_folder": curr,
+            "breadcrumbs": breadcrumbs,
+            "subfolders": sorted(list(subfolders_map.values()), key=lambda x: x["name"].lower()),
+            "all_folders": all_folders
+        }
 
     def get_item_by_id(self, item_id):
         """Get single media record by ID."""
@@ -630,6 +704,7 @@ class VidsBrowsHTTPHandler(BaseHTTPRequestHandler):
             sort = qs.get("sort", ["date_desc"])[0]
             limit = min(int(qs.get("limit", [60])[0]), 200)
             offset = int(qs.get("offset", [0])[0])
+            recursive = qs.get("recursive", ["1"])[0].lower() in ("1", "true", "yes")
 
             result = self.server.media_lib.query_media(
                 media_type=media_type,
@@ -637,7 +712,8 @@ class VidsBrowsHTTPHandler(BaseHTTPRequestHandler):
                 search_query=q,
                 sort=sort,
                 limit=limit,
-                offset=offset
+                offset=offset,
+                recursive=recursive
             )
             self.send_json(result)
             return
@@ -647,8 +723,9 @@ class VidsBrowsHTTPHandler(BaseHTTPRequestHandler):
                 self.send_response(200)
                 self.end_headers()
                 return
-            folders = self.server.media_lib.get_folders()
-            self.send_json({"folders": folders})
+            folder = qs.get("folder", [""])[0]
+            folder_data = self.server.media_lib.get_folders(current_folder=folder)
+            self.send_json(folder_data)
             return
 
         # 2. Thumbnail Request
