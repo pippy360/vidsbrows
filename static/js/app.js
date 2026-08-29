@@ -649,9 +649,11 @@ function openLightbox(index) {
   // Update viewer box
   if (isVideo) {
     el.imageViewerBox.hidden = true;
+    el.imageViewerBox.style.display = 'none';
     el.imageViewer.src = '';
 
     el.videoViewerBox.hidden = false;
+    el.videoViewerBox.style.display = 'flex';
     el.videoPlayer.src = item.media_url;
 
     // Fallback: if duration wasn't in DB yet, capture from HTML5 video metadata
@@ -667,11 +669,13 @@ function openLightbox(index) {
     el.videoPlayer.play().catch(() => {});
   } else {
     el.videoViewerBox.hidden = true;
+    el.videoViewerBox.style.display = 'none';
     el.videoPlayer.pause();
     el.videoPlayer.removeAttribute('src');
     el.videoPlayer.load();
 
     el.imageViewerBox.hidden = false;
+    el.imageViewerBox.style.display = 'flex';
     el.imageViewer.src = item.media_url;
   }
 
@@ -690,6 +694,10 @@ function closeLightbox() {
   el.videoPlayer.pause();
   el.videoPlayer.removeAttribute('src');
   el.videoPlayer.load();
+  el.videoViewerBox.hidden = true;
+  el.videoViewerBox.style.display = 'none';
+  el.imageViewerBox.hidden = true;
+  el.imageViewerBox.style.display = 'none';
   el.imageViewer.src = '';
   state.modalIndex = -1;
 }
