@@ -24,6 +24,7 @@ const state = {
   modalIndex: -1,
   scanStatus: 'idle',
   pollTimer: null,
+  pendingMediaId: null,
 };
 
 // DOM Elements
@@ -93,8 +94,9 @@ function init() {
   setupEventListeners();
   setupInfiniteScroll();
   fetchScanStatus();
-  fetchFolders(state.currentFolder);
-  resetAndFetch();
+
+  // Read initial view & filters from URL
+  applyUrlState(false);
 
   // Start polling scan status
   startScanStatusPolling();
@@ -104,6 +106,11 @@ function init() {
  * Set up user interface event listeners
  */
 function setupEventListeners() {
+  // Browser Back / Forward button navigation
+  window.addEventListener('popstate', () => {
+    applyUrlState(true);
+  });
+
   // Search input debounced
   let debounceTimeout = null;
   el.searchInput.addEventListener('input', (e) => {
@@ -111,6 +118,7 @@ function setupEventListeners() {
     el.clearSearchBtn.hidden = !state.searchQuery;
     clearTimeout(debounceTimeout);
     debounceTimeout = setTimeout(() => {
+      syncUrl(true);
       resetAndFetch();
     }, 300);
   });
@@ -119,6 +127,7 @@ function setupEventListeners() {
     el.searchInput.value = '';
     state.searchQuery = '';
     el.clearSearchBtn.hidden = true;
+    syncUrl(true);
     resetAndFetch();
     el.searchInput.focus();
   });
@@ -148,6 +157,7 @@ function setupEventListeners() {
       if (state.filterType === 'folders') {
         fetchFolders(state.currentFolder);
       }
+      syncUrl(true);
       resetAndFetch();
     });
   });
@@ -155,7 +165,7 @@ function setupEventListeners() {
   // Subfolder dropdown select
   el.folderSelect.addEventListener('change', (e) => {
     const val = e.target.value;
-    navigateToFolder(val === 'all' ? '' : val);
+    navigateToFolder(val === 'all' ? '' : val, true);
   });
 
   // Breadcrumb Up Button
@@ -221,11 +231,109 @@ function setupEventListeners() {
 }
 
 /**
+ * Update browser URL & history state
+ */
+function syncUrl(push = true) {
+  const params = new URLSearchParams();
+  if (state.currentFolder) params.set('folder', state.currentFolder);
+  if (state.filterType && state.filterType !== 'all') params.set('type', state.filterType);
+  if (state.sort && state.sort !== 'date_desc') params.set('sort', state.sort);
+  if (state.searchQuery) params.set('q', state.searchQuery);
+
+  const activeMedia = (state.modalIndex >= 0 && state.items[state.modalIndex])
+    ? state.items[state.modalIndex]
+    : null;
+
+  if (activeMedia) {
+    params.set('media', activeMedia.id);
+  }
+
+  const queryStr = params.toString();
+  const newUrl = queryStr ? `${window.location.pathname}?${queryStr}` : window.location.pathname;
+  const currentUrl = window.location.pathname + window.location.search;
+
+  if (newUrl === currentUrl) return;
+
+  const historyState = {
+    folder: state.currentFolder,
+    type: state.filterType,
+    sort: state.sort,
+    q: state.searchQuery,
+    hasModal: Boolean(activeMedia),
+    mediaId: activeMedia ? activeMedia.id : null,
+  };
+
+  if (push) {
+    window.history.pushState(historyState, '', newUrl);
+  } else {
+    window.history.replaceState(historyState, '', newUrl);
+  }
+}
+
+/**
+ * Apply state from current URL (used on initial load and popstate)
+ */
+function applyUrlState(isPopState = false) {
+  const params = new URLSearchParams(window.location.search);
+  const targetFolder = params.get('folder') || '';
+  const targetType = params.get('type') || 'all';
+  const targetSort = params.get('sort') || 'date_desc';
+  const targetQ = params.get('q') || '';
+  const targetMediaId = params.get('media');
+
+  const folderChanged = state.currentFolder !== targetFolder;
+  const typeChanged = state.filterType !== targetType;
+  const sortChanged = state.sort !== targetSort;
+  const qChanged = state.searchQuery !== targetQ;
+
+  state.currentFolder = targetFolder;
+  state.filterType = targetType;
+  state.sort = targetSort;
+  state.searchQuery = targetQ;
+
+  // Sync UI controls
+  if (el.searchInput.value !== targetQ) {
+    el.searchInput.value = targetQ;
+    el.clearSearchBtn.hidden = !targetQ;
+  }
+  if (el.sortSelect.value !== targetSort) {
+    el.sortSelect.value = targetSort;
+  }
+  el.tabBtns.forEach(b => b.classList.toggle('active', b.dataset.type === targetType));
+  el.folderSelect.value = targetFolder ? targetFolder : 'all';
+
+  // Handle modal state
+  if (isPopState) {
+    if (!targetMediaId && !el.modal.hidden) {
+      // User pressed Browser Back while modal was open -> close lightbox!
+      hideModalUI();
+    } else if (targetMediaId) {
+      const numId = parseInt(targetMediaId, 10);
+      const foundIdx = state.items.findIndex(item => item.id === numId);
+      if (foundIdx >= 0 && state.modalIndex !== foundIdx) {
+        showModalUI(foundIdx);
+      }
+    }
+  } else if (targetMediaId) {
+    state.pendingMediaId = parseInt(targetMediaId, 10);
+  }
+
+  // If query filters changed or initial load, re-fetch
+  if (folderChanged || typeChanged || sortChanged || qChanged || !isPopState) {
+    fetchFolders(state.currentFolder);
+    resetAndFetch();
+  }
+}
+
+/**
  * Navigate into a folder path
  */
-function navigateToFolder(folderPath) {
+function navigateToFolder(folderPath, pushHistory = true) {
   state.currentFolder = folderPath || '';
   el.folderSelect.value = state.currentFolder ? state.currentFolder : 'all';
+  if (pushHistory) {
+    syncUrl(true);
+  }
   fetchFolders(state.currentFolder);
   resetAndFetch();
 }
@@ -309,6 +417,15 @@ async function fetchNextBatch() {
 
     renderBatch(newItems, startIndex);
     updateSummaryText();
+
+    // Check if pendingMediaId from direct link should be opened
+    if (state.pendingMediaId != null) {
+      const pIdx = state.items.findIndex(item => item.id === state.pendingMediaId);
+      if (pIdx >= 0) {
+        showModalUI(pIdx);
+        state.pendingMediaId = null;
+      }
+    }
 
     if (!state.hasMore && state.items.length > 0) {
       el.endOfResults.hidden = false;
@@ -615,9 +732,9 @@ function startScanStatusPolling() {
 }
 
 /**
- * Open Unified Lightbox Modal
+ * Show Modal UI for item at index
  */
-function openLightbox(index) {
+function showModalUI(index) {
   if (index < 0 || index >= state.items.length) return;
   state.modalIndex = index;
   const item = state.items[index];
@@ -687,9 +804,17 @@ function openLightbox(index) {
 }
 
 /**
- * Close Lightbox Modal
+ * Open Unified Lightbox Modal
  */
-function closeLightbox() {
+function openLightbox(index, pushHistory = true) {
+  showModalUI(index);
+  syncUrl(pushHistory);
+}
+
+/**
+ * Hide Modal UI
+ */
+function hideModalUI() {
   el.modal.hidden = true;
   el.videoPlayer.pause();
   el.videoPlayer.removeAttribute('src');
@@ -703,11 +828,23 @@ function closeLightbox() {
 }
 
 /**
+ * Close Lightbox Modal (clicking close button, backdrop, or Esc)
+ */
+function closeLightbox() {
+  if (window.history.state && window.history.state.hasModal) {
+    window.history.back();
+  } else {
+    hideModalUI();
+    syncUrl(false);
+  }
+}
+
+/**
  * Lightbox Previous Item
  */
 function showPreviousMedia() {
   if (state.modalIndex > 0) {
-    openLightbox(state.modalIndex - 1);
+    openLightbox(state.modalIndex - 1, false);
   }
 }
 
@@ -716,12 +853,12 @@ function showPreviousMedia() {
  */
 function showNextMedia() {
   if (state.modalIndex < state.items.length - 1) {
-    openLightbox(state.modalIndex + 1);
+    openLightbox(state.modalIndex + 1, false);
   } else if (state.hasMore && !state.isLoading && state.filterType !== 'folders') {
     // If at end of loaded buffer, load next batch and advance
     fetchNextBatch().then(() => {
       if (state.modalIndex < state.items.length - 1) {
-        openLightbox(state.modalIndex + 1);
+        openLightbox(state.modalIndex + 1, false);
       }
     });
   }
