@@ -76,18 +76,20 @@ options:
 
 ## 🗄️ How the Cache Works
 
-When run, VidsBrows creates a hidden `.vidsbrows_cache/` folder inside the target directory:
+Thumbnails and the database are saved directly in the **website's repository directory** under `.vidsbrows_cache/`, keeping your scanned media directories 100% untouched and clean:
+
 ```text
-[your-media-folder]/
-├── .vidsbrows_cache/
-│   ├── library.db       # SQLite index with WAL mode (instant filtering & sorting)
-│   └── thumbnails/      # Cached 440px JPEG thumbnails (keyed by content hash)
-├── Subfolder1/
-│   └── video1.mp4
-└── photo1.jpg
+vidsbrows/                          # Website directory
+├── server.py
+├── static/
+└── .vidsbrows_cache/               # All caches stored here
+    └── <folder_name>_<hash>/       # Namespaced per media folder
+        ├── library.db              # SQLite index (WAL mode)
+        └── thumbnails/             # Cached 440px JPEG thumbnails
 ```
-- Thumbnails are generated only once per file based on a hash of path, size, and modification time.
-- If files are added or modified, the background scanner updates only the changed files.
+
+- **Clean Scanned Folders**: VidsBrows does not write any files to the folder you point it to.
+- **Multiple Libraries Supported**: Each media folder you browse gets its own subfolder inside `vidsbrows/.vidsbrows_cache/`, so switching between different folders retains all cached thumbnails and indexes without re-scanning.
 - `.vidsbrows_cache/` is automatically ignored in git.
 
 ---

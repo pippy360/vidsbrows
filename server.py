@@ -69,19 +69,11 @@ class MediaLibrary:
         if cache_dir is not None:
             self.cache_dir = Path(cache_dir).resolve()
         else:
-            default_cache = target_dir / ".vidsbrows_cache"
-            try:
-                default_cache.mkdir(parents=True, exist_ok=True)
-                test_file = default_cache / ".write_test"
-                test_file.touch()
-                test_file.unlink()
-                self.cache_dir = default_cache
-            except (PermissionError, OSError):
-                # Fallback to user home cache if target_dir is read-only
-                dir_hash = hashlib.md5(str(target_dir.resolve()).encode()).hexdigest()[:12]
-                fallback_cache = Path.home() / ".cache" / "vidsbrows" / f"{target_dir.name}_{dir_hash}"
-                print(f"[!] Notice: Target directory is read-only. Falling back cache to: {fallback_cache}")
-                self.cache_dir = fallback_cache
+            # Save thumbnails & SQLite database in the website's directory
+            website_dir = Path(__file__).resolve().parent
+            dir_hash = hashlib.md5(str(target_dir.resolve()).encode("utf-8")).hexdigest()[:10]
+            safe_name = re.sub(r'[^a-zA-Z0-9_-]', '_', target_dir.name or "root")
+            self.cache_dir = website_dir / ".vidsbrows_cache" / f"{safe_name}_{dir_hash}"
 
         self.thumbs_dir = self.cache_dir / "thumbnails"
         self.db_path = self.cache_dir / "library.db"
@@ -840,7 +832,7 @@ def main():
     parser.add_argument("--port", "-p", type=int, default=8000, help="Port to bind (default: 8000)")
     parser.add_argument("--host", default="127.0.0.1", help="Host interface to bind (default: 127.0.0.1)")
     parser.add_argument("--workers", "-w", type=int, default=2, help="Number of background thumbnail workers (default: 2)")
-    parser.add_argument("--cache-dir", default=None, help="Directory to store thumbnails & DB (default: <target_dir>/.vidsbrows_cache)")
+    parser.add_argument("--cache-dir", default=None, help="Directory to store thumbnails & DB (default: <website_dir>/.vidsbrows_cache/<folder>_<hash>)")
 
     args = parser.parse_args()
 
