@@ -63,9 +63,26 @@ def format_bytes(size_bytes: int) -> str:
 class MediaLibrary:
     """Thread-safe SQLite database manager for media metadata and thumbnails."""
 
-    def __init__(self, target_dir: Path):
+    def __init__(self, target_dir: Path, cache_dir: Path = None):
         self.target_dir = target_dir
-        self.cache_dir = target_dir / ".vidsbrows_cache"
+
+        if cache_dir is not None:
+            self.cache_dir = Path(cache_dir).resolve()
+        else:
+            default_cache = target_dir / ".vidsbrows_cache"
+            try:
+                default_cache.mkdir(parents=True, exist_ok=True)
+                test_file = default_cache / ".write_test"
+                test_file.touch()
+                test_file.unlink()
+                self.cache_dir = default_cache
+            except (PermissionError, OSError):
+                # Fallback to user home cache if target_dir is read-only
+                dir_hash = hashlib.md5(str(target_dir.resolve()).encode()).hexdigest()[:12]
+                fallback_cache = Path.home() / ".cache" / "vidsbrows" / f"{target_dir.name}_{dir_hash}"
+                print(f"[!] Notice: Target directory is read-only. Falling back cache to: {fallback_cache}")
+                self.cache_dir = fallback_cache
+
         self.thumbs_dir = self.cache_dir / "thumbnails"
         self.db_path = self.cache_dir / "library.db"
 
@@ -809,11 +826,11 @@ class VidsBrowsHTTPHandler(BaseHTTPRequestHandler):
 class VidsBrowsServer(HTTPServer):
     """Extended HTTPServer with references to scanner and media library."""
 
-    def __init__(self, server_address, RequestHandlerClass, target_dir: Path, static_dir: Path, workers=2):
+    def __init__(self, server_address, RequestHandlerClass, target_dir: Path, static_dir: Path, workers=2, cache_dir=None):
         super().__init__(server_address, RequestHandlerClass)
         self.target_dir = target_dir
         self.static_dir = static_dir
-        self.media_lib = MediaLibrary(target_dir)
+        self.media_lib = MediaLibrary(target_dir, cache_dir=cache_dir)
         self.scanner_mgr = ScannerManager(target_dir, self.media_lib, num_workers=workers)
 
 
@@ -823,6 +840,7 @@ def main():
     parser.add_argument("--port", "-p", type=int, default=8000, help="Port to bind (default: 8000)")
     parser.add_argument("--host", default="127.0.0.1", help="Host interface to bind (default: 127.0.0.1)")
     parser.add_argument("--workers", "-w", type=int, default=2, help="Number of background thumbnail workers (default: 2)")
+    parser.add_argument("--cache-dir", default=None, help="Directory to store thumbnails & DB (default: <target_dir>/.vidsbrows_cache)")
 
     args = parser.parse_args()
 
@@ -844,14 +862,21 @@ def main():
         sys.exit(1)
 
     port = int(os.environ.get("PORT", args.port))
-    server = VidsBrowsServer((args.host, port), VidsBrowsHTTPHandler, target_path, static_path, workers=args.workers)
+    server = VidsBrowsServer(
+        (args.host, port), 
+        VidsBrowsHTTPHandler, 
+        target_path, 
+        static_path, 
+        workers=args.workers,
+        cache_dir=Path(args.cache_dir).resolve() if args.cache_dir else None
+    )
 
     print("\n" + "=" * 65)
     print("  🎬  VidsBrows - Offline Media Browser & Streaming Server")
     print("=" * 65)
     print(f"  📁 Browsing Directory : {target_path}")
     print(f"  ⚡ Web Interface      : http://{args.host}:{port}/")
-    print(f"  💾 Cache & Thumbnails : {target_path / '.vidsbrows_cache'}")
+    print(f"  💾 Cache & Thumbnails : {server.media_lib.cache_dir}")
     print(f"  ⚙️  Thumbnail Workers  : {args.workers} background threads")
     print("=" * 65)
     print("  Press Ctrl+C to stop the server.\n")
