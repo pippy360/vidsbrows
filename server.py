@@ -60,6 +60,51 @@ def format_bytes(size_bytes: int) -> str:
     return f"{size_bytes:.1f} PB"
 
 
+def format_duration(seconds: float) -> str:
+    """Format seconds into HH:MM:SS or MM:SS."""
+    if not seconds or seconds <= 0:
+        return ""
+    total_sec = int(round(seconds))
+    hours = total_sec // 3600
+    minutes = (total_sec % 3600) // 60
+    secs = total_sec % 60
+    if hours > 0:
+        return f"{hours}:{minutes:02d}:{secs:02d}"
+    return f"{minutes:02d}:{secs:02d}"
+
+
+def extract_video_duration(video_path: str) -> str:
+    """Extract video duration using ffprobe or ffmpeg."""
+    # Method 1: ffprobe
+    try:
+        cmd = [
+            "ffprobe", "-v", "error",
+            "-show_entries", "format=duration",
+            "-of", "default=noprint_wrappers=1:nokey=1",
+            str(video_path)
+        ]
+        res = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, text=True, timeout=5)
+        if res.returncode == 0 and res.stdout.strip():
+            sec = float(res.stdout.strip())
+            return format_duration(sec)
+    except Exception:
+        pass
+
+    # Method 2: ffmpeg -i parsing
+    try:
+        cmd = ["ffmpeg", "-hide_banner", "-i", str(video_path)]
+        res = subprocess.run(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE, text=True, timeout=5)
+        m = re.search(r"Duration:\s*(\d+):(\d+):(\d+)", res.stderr)
+        if m:
+            h, m_val, s = map(int, m.groups())
+            total = h * 3600 + m_val * 60 + s
+            return format_duration(total)
+    except Exception:
+        pass
+
+    return ""
+
+
 class MediaLibrary:
     """Thread-safe SQLite database manager for media metadata and thumbnails."""
 
@@ -107,7 +152,8 @@ class MediaLibrary:
                         size_bytes INTEGER,
                         mtime REAL,
                         thumb_file TEXT,
-                        thumb_status TEXT DEFAULT 'pending'
+                        thumb_status TEXT DEFAULT 'pending',
+                        duration TEXT
                     );
                 """)
                 conn.execute("CREATE INDEX IF NOT EXISTS idx_rel_path ON media(rel_path);")
@@ -115,6 +161,13 @@ class MediaLibrary:
                 conn.execute("CREATE INDEX IF NOT EXISTS idx_parent_dir ON media(parent_dir);")
                 conn.execute("CREATE INDEX IF NOT EXISTS idx_mtime ON media(mtime);")
                 conn.execute("CREATE INDEX IF NOT EXISTS idx_thumb_status ON media(thumb_status);")
+
+                # Auto-migrate table if duration column doesn't exist
+                cursor = conn.execute("PRAGMA table_info(media)")
+                cols = [row["name"] for row in cursor.fetchall()]
+                if "duration" not in cols:
+                    conn.execute("ALTER TABLE media ADD COLUMN duration TEXT;")
+
                 conn.commit()
 
     def get_existing_file_map(self):
@@ -159,24 +212,31 @@ class MediaLibrary:
                     conn.commit()
 
     def get_pending_thumbnails(self, limit=50):
-        """Fetch items waiting for thumbnail generation."""
+        """Fetch items waiting for thumbnail generation or video duration extraction."""
         with self._lock:
             with self.get_connection() as conn:
                 cursor = conn.execute(
-                    "SELECT id, abs_path, rel_path, media_type, ext, mtime, size_bytes "
-                    "FROM media WHERE thumb_status = 'pending' ORDER BY id DESC LIMIT ?",
+                    "SELECT id, abs_path, rel_path, media_type, ext, mtime, size_bytes, duration "
+                    "FROM media WHERE thumb_status = 'pending' OR (media_type = 'video' AND (duration IS NULL OR duration = '')) "
+                    "ORDER BY id DESC LIMIT ?",
                     (limit,)
                 )
                 return [dict(row) for row in cursor.fetchall()]
 
-    def update_thumbnail(self, item_id, thumb_file, status='done'):
-        """Update thumbnail status for an item."""
+    def update_thumbnail(self, item_id, thumb_file, status='done', duration=None):
+        """Update thumbnail status and duration for an item."""
         with self._lock:
             with self.get_connection() as conn:
-                conn.execute(
-                    "UPDATE media SET thumb_file = ?, thumb_status = ? WHERE id = ?",
-                    (thumb_file, status, item_id)
-                )
+                if duration:
+                    conn.execute(
+                        "UPDATE media SET thumb_file = ?, thumb_status = ?, duration = ? WHERE id = ?",
+                        (thumb_file, status, duration, item_id)
+                    )
+                else:
+                    conn.execute(
+                        "UPDATE media SET thumb_file = ?, thumb_status = ? WHERE id = ?",
+                        (thumb_file, status, item_id)
+                    )
                 conn.commit()
 
     def get_stats(self):
@@ -242,7 +302,7 @@ class MediaLibrary:
 
                 query_params = list(params) + [limit, offset]
                 cursor = conn.execute(f"""
-                    SELECT id, rel_path, filename, parent_dir, media_type, ext, size_bytes, mtime, thumb_file, thumb_status
+                    SELECT id, rel_path, filename, parent_dir, media_type, ext, size_bytes, mtime, thumb_file, thumb_status, duration
                     FROM media {where_sql}
                     ORDER BY {order_sql}
                     LIMIT ? OFFSET ?
@@ -264,6 +324,7 @@ class MediaLibrary:
                 "size_bytes": item["size_bytes"],
                 "mtime": item["mtime"],
                 "date_formatted": dt_str,
+                "duration": item.get("duration") or "",
                 "thumb_url": f"/api/thumbnail?id={item['id']}",
                 "media_url": f"/api/file?id={item['id']}",
                 "has_thumb": bool(item["thumb_file"] and item["thumb_status"] == 'done'),
@@ -510,9 +571,14 @@ class ScannerManager:
         thumb_filename = f"{hashlib.md5(hash_input).hexdigest()}.jpg"
         dest_path = self.media_lib.thumbs_dir / thumb_filename
 
+        # Extract duration for video files
+        duration_str = None
+        if media_type == "video":
+            duration_str = extract_video_duration(abs_path)
+
         # If already exists on disk
         if dest_path.exists() and dest_path.stat().st_size > 0:
-            self.media_lib.update_thumbnail(item_id, thumb_filename, status='done')
+            self.media_lib.update_thumbnail(item_id, thumb_filename, status='done', duration=duration_str)
             return dest_path
 
         success = False
@@ -526,10 +592,10 @@ class ScannerManager:
             success = False
 
         if success and dest_path.exists() and dest_path.stat().st_size > 0:
-            self.media_lib.update_thumbnail(item_id, thumb_filename, status='done')
+            self.media_lib.update_thumbnail(item_id, thumb_filename, status='done', duration=duration_str)
             return dest_path
         else:
-            self.media_lib.update_thumbnail(item_id, None, status='failed')
+            self.media_lib.update_thumbnail(item_id, None, status='failed', duration=duration_str)
             return None
 
     def _generate_image_thumbnail(self, src_path: str, dest_path: Path) -> bool:

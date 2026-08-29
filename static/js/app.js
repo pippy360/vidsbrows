@@ -81,6 +81,7 @@ const el = {
   imageViewerBox: document.getElementById('image-viewer-box'),
   imageViewer: document.getElementById('active-image-viewer'),
   modalFolderTag: document.getElementById('modal-folder-tag'),
+  modalDurationTag: document.getElementById('modal-duration-tag'),
   modalSizeTag: document.getElementById('modal-size-tag'),
   modalDateTag: document.getElementById('modal-date-tag'),
 };
@@ -343,10 +344,14 @@ function renderBatch(items, startIndex) {
     const typeLabel = isVideo ? 'VIDEO' : 'PHOTO';
     const typeBadgeClass = isVideo ? 'video' : 'image';
     const overlayIcon = isVideo ? '▶' : '🔍';
+    const durationBadge = (isVideo && item.duration)
+      ? `<span class="card-duration-badge">⏱️ ${escapeHtml(item.duration)}</span>`
+      : '';
 
     card.innerHTML = `
       <div class="card-media-box">
         <span class="card-type-badge ${typeBadgeClass}">${typeLabel}</span>
+        ${durationBadge}
         <span class="card-size-badge">${escapeHtml(item.size_formatted)}</span>
         
         <img 
@@ -634,6 +639,13 @@ function openLightbox(index) {
   el.modalSizeTag.textContent = `💾 ${item.size_formatted}`;
   el.modalDateTag.textContent = `📅 ${item.date_formatted}`;
 
+  if (isVideo && item.duration) {
+    el.modalDurationTag.textContent = `⏱️ ${item.duration}`;
+    el.modalDurationTag.hidden = false;
+  } else {
+    el.modalDurationTag.hidden = true;
+  }
+
   // Update viewer box
   if (isVideo) {
     el.imageViewerBox.hidden = true;
@@ -641,6 +653,17 @@ function openLightbox(index) {
 
     el.videoViewerBox.hidden = false;
     el.videoPlayer.src = item.media_url;
+
+    // Fallback: if duration wasn't in DB yet, capture from HTML5 video metadata
+    const onLoadedMetadata = () => {
+      if (el.videoPlayer.duration && !isNaN(el.videoPlayer.duration)) {
+        el.modalDurationTag.textContent = `⏱️ ${formatSeconds(el.videoPlayer.duration)}`;
+        el.modalDurationTag.hidden = false;
+      }
+      el.videoPlayer.removeEventListener('loadedmetadata', onLoadedMetadata);
+    };
+    el.videoPlayer.addEventListener('loadedmetadata', onLoadedMetadata);
+
     el.videoPlayer.play().catch(() => {});
   } else {
     el.videoViewerBox.hidden = true;
@@ -745,6 +768,19 @@ function handleKeyDown(e) {
       }
       break;
   }
+}
+
+/**
+ * Format raw seconds into HH:MM:SS or MM:SS
+ */
+function formatSeconds(totalSec) {
+  if (!totalSec || isNaN(totalSec) || totalSec <= 0) return '';
+  const sec = Math.round(totalSec);
+  const h = Math.floor(sec / 3600);
+  const m = Math.floor((sec % 3600) / 60);
+  const s = sec % 60;
+  if (h > 0) return `${h}:${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}`;
+  return `${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}`;
 }
 
 /**
